@@ -1,0 +1,68 @@
+#!/usr/bin/env ruby
+
+require 'open3'
+require 'json'
+
+def usage
+  'Usage: new <profile|role> NAME'
+end
+
+# Validate and process arguments
+if ARGV.length != 2
+  puts usage()
+  exit(1)
+end
+
+type = ARGV.shift
+name = ARGV.shift.sub(/[^:]*::/,'')
+
+unless ['profile', 'role'].include?(type)
+  puts "Invalid type #{type} - must be 'profile' or 'role'"
+  puts usage()
+  exit(1)
+end
+
+# Determine repository name
+toplevel = `git rev-parse --show-toplevel`.strip
+begin
+  metadata_file = File.open("#{toplevel}/metadata.json")
+  metadata = JSON.load(metadata_file)
+  repo_name = metadata['name'].split('-')[1]
+rescue Exception => e
+  STDERR.puts "Failed to read metadata.json file: #{e}"
+end
+
+# Check for existing class
+if File.exist? "#{toplevel}/site/#{type}/manifests/#{name}.pp"
+  STDERR.puts "ERROR: #{type} #{name} already exists"
+  exit(1)
+end
+
+# Create new class with PDK - need to remove and variables already set by PDK
+env = ENV.delete_if { |env| env =~ /^(GEM|RUBY|BUNDLE|PUPPET)/ }
+stdout, stderr, status = Open3.capture3(env, 'pdk', 'new', 'class', "#{type}::#{name}", unsetenv_others: true)
+unless status.success?
+  puts stderr
+  exit status.exitstatus
+end
+
+# Determine which files were created
+manifest = stdout.split("\n").select { |line| line =~ /#{name}.pp/ }.pop
+spec = stdout.split("\n").select { |line| line =~ /#{name}_spec.rb/ }.pop
+if manifest.nil? or spec.nil?
+  puts "Failed to find file paths in PDK output:\nSTDOUT: #{stdout}\nSTDERR:#{stderr}"
+  exit(1)
+end
+
+# Strip out repo name from created files
+stdout, stderr, status = Open3.capture3("sed -i 's/#{repo_name}:://g' #{manifest} #{spec}")
+unless status.success?
+  puts stderr
+  exit status.exitstatus
+end
+
+# Move manifest into site directory
+manifest_new = manifest.sub(%r{manifests/#{type}}, "site/#{type}/manifests")
+File.rename(manifest, manifest_new)
+
+puts "New #{type} #{name} created successfully:\nManifest: #{manifest_new}\nSpec file: #{spec}"
