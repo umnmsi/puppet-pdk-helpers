@@ -4,7 +4,7 @@ require 'open3'
 require 'json'
 
 def usage
-  'Usage: new <profile|role> NAME'
+  'Usage: new <profile|role|test> NAME'
 end
 
 # Validate and process arguments
@@ -14,12 +14,24 @@ if ARGV.length != 2
 end
 
 type = ARGV.shift
-name = ARGV.shift.sub(/[^:]*::/,'')
+name = ARGV.shift
+create_test_only = false
 
-unless ['profile', 'role'].include?(type)
-  puts "Invalid type #{type} - must be 'profile' or 'role'"
+unless ['profile', 'role', 'test'].include?(type)
+  puts "Invalid type #{type} - must be 'profile', 'role', or 'test'"
   puts usage()
   exit(1)
+end
+
+if type == 'test'
+  unless name =~ /^(profile|role)::/
+    STDERR.puts "ERROR: Class name must start with 'profile::' or 'role::'"
+    exit(1)
+  end
+  create_test_only = true
+  type, name = name.split('::')
+else
+  name = name.sub(/^#{type}::/,'')
 end
 
 # Determine repository name
@@ -33,12 +45,27 @@ rescue Exception => e
 end
 
 # Check for existing class
-if File.exist? "#{toplevel}/site/#{type}/manifests/#{name}.pp"
-  STDERR.puts "ERROR: #{type} #{name} already exists"
+manifest_path = "#{toplevel}/site/#{type}/manifests/#{name}.pp"
+manifest_exists = File.exist? manifest_path
+spec_path = "#{toplevel}/spec/classes/#{type}/#{name}_spec.rb"
+spec_exists = File.exist? spec_path
+if create_test_only
+  unless manifest_exists
+    STDERR.puts "ERROR: Manifest #{manifest_path} does not exist"
+    exit(1)
+  end
+else
+  if manifest_exists
+    STDERR.puts "ERROR: Manifest #{manifest_path} already exists"
+    exit(1)
+  end
+end
+if spec_exists
+  STDERR.puts "ERROR: Test file #{spec_path} already exists"
   exit(1)
 end
 
-# Create new class with PDK - need to remove and variables already set by PDK
+# Create new class with PDK - need to remove any variables already set by PDK
 env = ENV.delete_if { |env| env =~ /^(GEM|RUBY|BUNDLE|PUPPET)/ }
 stdout, stderr, status = Open3.capture3(env, 'pdk', 'new', 'class', "#{type}::#{name}", unsetenv_others: true)
 unless status.success?
@@ -61,8 +88,19 @@ unless status.success?
   exit status.exitstatus
 end
 
-# Move manifest into site directory
-manifest_new = manifest.sub(%r{manifests/#{type}}, "site/#{type}/manifests")
-File.rename(manifest, manifest_new)
+# Move manifest into site directory if creating profile or role
+# or delete manifest if just creating spec file
+if create_test_only
+  File.unlink(manifest)
+else
+  manifest_new = manifest.sub(%r{manifests/#{type}}, "site/#{type}/manifests")
+  File.rename(manifest, manifest_new)
+end
 
-puts "New #{type} #{name} created successfully:\nManifest: #{manifest_new}\nSpec file: #{spec}"
+if create_test_only
+  puts "New test #{type}::#{name} created successfully:"
+else
+  puts "New #{type} #{name} created successfully:"
+  puts "Manifest: #{manifest_new}"
+end
+puts "Spec file: #{spec}"
