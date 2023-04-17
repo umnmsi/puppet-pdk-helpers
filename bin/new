@@ -67,6 +67,7 @@ end
 
 # Create new class with PDK - need to remove any variables already set by PDK
 env = ENV.delete_if { |env| env =~ /^(GEM|RUBY|BUNDLE|PUPPET)/ }
+env['PDK_PUPPET_VERSION'] = '6'
 stdout, stderr, status = Open3.capture3(env, 'pdk', 'new', 'class', "#{type}::#{name}", unsetenv_others: true)
 unless status.success?
   puts stderr
@@ -77,7 +78,7 @@ end
 manifest = stdout.split("\n").select { |line| line =~ /#{name}.pp/ }.pop
 spec = stdout.split("\n").select { |line| line =~ /#{name}_spec.rb/ }.pop
 if manifest.nil? or spec.nil?
-  puts "Failed to find file paths in PDK output:\nSTDOUT: #{stdout}\nSTDERR:#{stderr}"
+  puts "Failed to find file paths in PDK output:\nSTDOUT: #{stdout}\nSTDERR:i #{stderr}"
   exit(1)
 end
 
